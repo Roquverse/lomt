@@ -1,9 +1,29 @@
 <?php
+echo json_encode(['debug' => 'lomt5-register-process.php started']);
+exit;
+
 require_once 'admin/config.php';
+require_once 'admin/env.php';
 
 // Enable error reporting for debugging
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
+set_error_handler(function($errno, $errstr, $errfile, $errline) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => "PHP Error [$errno]: $errstr in $errfile on line $errline"
+    ]);
+    exit;
+});
+set_exception_handler(function($e) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => 'Uncaught Exception: ' . $e->getMessage()
+    ]);
+    exit;
+});
 
 header('Content-Type: application/json');
 
@@ -57,36 +77,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     try {
-        $conn = getDBConnection();
-        
+        // Use $conn from config.php directly
         // Prepare SQL statement
         $sql = "INSERT INTO lomt5_registrations (
             registration_date, name, email, phone, business_name, 
             business_description, social_media_handles, website, 
             business_stage, challenges, expectations
         ) VALUES (
-            NOW(), :name, :email, :phone, :business_name, 
-            :business_description, :social_media, :website, 
-            :business_stage, :challenges, :expectations
+            NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )";
-        
         $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            throw new Exception("Prepare failed: " . $conn->error);
+        }
+        $stmt->bind_param(
+            "ssssssssss",
+            $name,
+            $email,
+            $phone,
+            $business,
+            $description,
+            $social_media,
+            $website,
+            $business_stage,
+            $challenges,
+            $expectations
+        );
+        if (!$stmt->execute()) {
+            throw new Exception("Execute failed: " . $stmt->error);
+        }
         
-        // Bind parameters
-        $stmt->bindParam(':name', $name);
-        $stmt->bindParam(':email', $email);
-        $stmt->bindParam(':phone', $phone);
-        $stmt->bindParam(':business_name', $business);
-        $stmt->bindParam(':business_description', $description);
-        $stmt->bindParam(':social_media', $social_media);
-        $stmt->bindParam(':website', $website);
-        $stmt->bindParam(':business_stage', $business_stage);
-        $stmt->bindParam(':challenges', $challenges);
-        $stmt->bindParam(':expectations', $expectations);
-        
-        // Execute the statement
-        $stmt->execute();
-        
+        // PHPMailer setup
+        require_once __DIR__ . '/admin/phpmailer/PHPMailer.php';
+        require_once __DIR__ . '/admin/phpmailer/SMTP.php';
+        require_once __DIR__ . '/admin/phpmailer/Exception.php';
+        use PHPMailer\PHPMailer\PHPMailer;
+        use PHPMailer\PHPMailer\Exception;
+
         // Admin email configuration
         $adminEmail = 'damicoledj@gmail.com';
         $adminSubject = 'New LOMT5 Registration';
@@ -213,23 +240,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </html>
         ";
 
-        // Send admin notification email
-        $adminMailSent = mail($adminEmail, $adminSubject, $adminMessage, implode("\r\n", $adminHeaders));
+        // Create PHPMailer instance for admin
+        $mailAdmin = new PHPMailer(true);
+        try {
+            $mailAdmin->isSMTP();
+            $mailAdmin->Host = $_ENV['SMTP_HOST'];
+            $mailAdmin->SMTPAuth = true;
+            $mailAdmin->Username = $_ENV['SMTP_USER'];
+            $mailAdmin->Password = $_ENV['SMTP_PASS'];
+            $mailAdmin->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            $mailAdmin->Port = $_ENV['SMTP_PORT'];
+            $mailAdmin->setFrom($_ENV['SMTP_FROM'], $_ENV['SMTP_FROM_NAME']);
+            $mailAdmin->addAddress($adminEmail);
+            $mailAdmin->addReplyTo($email, $name);
+            $mailAdmin->isHTML(true);
+            $mailAdmin->Subject = $adminSubject;
+            $mailAdmin->Body = $adminMessage;
+            $mailAdmin->send();
+            $adminMailSent = true;
+        } catch (Exception $e) {
+            $adminMailSent = false;
+            error_log('PHPMailer Admin Error: ' . $mailAdmin->ErrorInfo);
+        }
 
-        // Send user confirmation email
-        $userMailSent = mail($email, $userSubject, $userMessage, implode("\r\n", $userHeaders));
+        // Create PHPMailer instance for user
+        $mailUser = new PHPMailer(true);
+        try {
+            $mailUser->isSMTP();
+            $mailUser->Host = $_ENV['SMTP_HOST'];
+            $mailUser->SMTPAuth = true;
+            $mailUser->Username = $_ENV['SMTP_USER'];
+            $mailUser->Password = $_ENV['SMTP_PASS'];
+            $mailUser->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            $mailUser->Port = $_ENV['SMTP_PORT'];
+            $mailUser->setFrom($_ENV['SMTP_FROM'], $_ENV['SMTP_FROM_NAME']);
+            $mailUser->addAddress($email, $name);
+            $mailUser->addReplyTo($_ENV['SMTP_FROM'], $_ENV['SMTP_FROM_NAME']);
+            $mailUser->isHTML(true);
+            $mailUser->Subject = $userSubject;
+            $mailUser->Body = $userMessage;
+            $mailUser->send();
+            $userMailSent = true;
+        } catch (Exception $e) {
+            $userMailSent = false;
+            error_log('PHPMailer User Error: ' . $mailUser->ErrorInfo);
+        }
 
         if ($adminMailSent && $userMailSent) {
             $response['success'] = true;
             $response['message'] = 'Registration successful! Please check your email for next steps.';
         } else {
             $response['message'] = 'Registration saved but email delivery failed. Please check your email address.';
-            error_log("Email sending failed for registration: " . $email);
         }
         
     } catch (PDOException $e) {
-        $response['message'] = 'Registration failed. Please try again later.';
+        $response['message'] = 'Registration failed: ' . $e->getMessage();
         error_log("Registration error: " . $e->getMessage());
+        echo json_encode($response);
+        exit;
+    } catch (Exception $e) {
+        $response['message'] = 'Registration failed: ' . $e->getMessage();
+        error_log("Registration error: " . $e->getMessage());
+        echo json_encode($response);
+        exit;
     }
 }
 
