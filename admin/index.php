@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         
         // Query to check credentials
-        $sql = "SELECT id, username, full_name FROM admin_users WHERE username = ? AND password = ? AND is_active = 1";
+        $sql = "SELECT id, username, full_name FROM admin_users WHERE username = ? AND password = ?";
         $stmt = $conn->prepare($sql);
         
         if (!$stmt) {
