@@ -1,9 +1,9 @@
 <?php
 // Database configuration
 define('DB_HOST', 'localhost');
-define('DB_USER', 'root');     // Your MySQL username
-define('DB_PASS', '');         // Your MySQL password
-define('DB_NAME', 'lomt_db');  // Your database name
+define('DB_USER', 'dreamsme_lomt_db');     // Your MySQL username
+define('DB_PASS', '9S]t!.9CrX{C');         // Your MySQL password
+define('DB_NAME', 'dreamsme_lomt_db');   // Your database name
 
 // Create database connection
 try {
